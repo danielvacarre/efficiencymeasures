@@ -4,23 +4,22 @@ import streamlit as st
 from pandas import DataFrame
 from typing import Optional
 
+from models.dea import DEA
 from models.efficiency_method import EfficiencyMethod
+from models.fdh import FDH
 
 
-def show_results(
-    model: EfficiencyMethod,
-    eps: Optional[float] = 0.0) -> None:
-    """
-    Render a button to compute efficiencies and display them as a DataFrame.
+def show_results(selected_methods: list[str], df: DataFrame, inputs: list[str], outputs: list[str]) -> None:
 
-    Args:
-        model: An EfficiencyMethod (or subclass) instance, already configured
-               with inputs, outputs and selected methods.
-        eps:   Epsilon parameter for methods that require it (default 0.0).
-    """
-    if st.button("Calculate Efficiencies"):
-        with st.spinner("Calculating efficiencies…"):
-            # This will return the original inputs+outputs plus one column per method
-            df_eff: DataFrame = model.get_efficiencies(eps)
-        st.success("Done!")
-        st.dataframe(df_eff)
+    if st.button("Calcular eficiencias"):
+        df_results = df[inputs + outputs].copy()
+        for m in selected_methods:
+            tipo, op = m.split("_", 1)  # e.g. "DEA", "RI"
+            method_key = op.lower()  # "ri", "ro", ...
+            ModelClass = DEA if tipo == "DEA" else FDH
+            model = ModelClass(inputs, outputs, df, methods=[method_key])
+            func = getattr(model, f"calculate_{method_key}")
+            eff_values = func()
+            df_results[m] = eff_values
+        st.success("¡Listo!")
+        st.dataframe(df_results)

@@ -1,36 +1,19 @@
-from streamlit import sidebar
+from streamlit import sidebar, multiselect
 
+from models.dea import DEA
 from models.fdh import FDH
 
 
-def configure_model(df, X_vars, Y_vars, key_suffix=""):
+def configure_model():
+
     # --- Model selection ---
-    alg = sidebar.selectbox(
-        "Select algorithm:",["FDH", "DEA"],
-    key = f"algorithm_selectbox_{key_suffix}"
+    ALL_METHODS = [
+        "DEA_RI", "DEA_RO", "DEA_DDF", "DEA_WA", "DEA_RUI", "DEA_RUO", "DEA_ERG",
+        "FDH_RI", "FDH_RO", "FDH_DDF", "FDH_WA", "FDH_RUI", "FDH_RUO", "FDH_ERG"
+    ]
+    selected = multiselect(
+        "Selecciona los métodos para calcular eficiencia",
+        ALL_METHODS,
+        default=["DEA_RI"]
     )
-
-    if alg == "FDH":
-    # Available FDH methods
-        available_methods = [
-            "ri",  # Input-oriented
-            "ro",  # Output-oriented
-            "ddf",  # Directional Distance
-            "wa", "rui", "ruo", "erg"  # Additive & Russell
-        ]
-
-    methods = sidebar.multiselect(
-        "FDH methods:",
-        available_methods,
-        default=[available_methods[0]],
-        key=f"methods_multiselect_{key_suffix}"
-    )
-
-    # Initialize FDH model with chosen methods
-    model = FDH(
-        inputs=X_vars,
-        outputs=Y_vars,
-        data=df,
-        methods=methods
-    )
-    return model
+    return selected
