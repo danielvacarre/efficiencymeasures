@@ -1,4 +1,4 @@
-from models.efficiency_method import EfficiencyMethod
+from models.efficiency.efficiency_method import EfficiencyMethod
 from ortools.linear_solver import pywraplp
 
 class FDH(EfficiencyMethod):
@@ -66,6 +66,9 @@ class FDH(EfficiencyMethod):
             # print(solver.ExportModelAsLpFormat(True))
             status = solver.Solve()
             effs.append(round(theta.solution_value(), 6) if status == pywraplp.Solver.OPTIMAL else 0.0)
+
+            #print(solver.ExportModelAsLpFormat(True))
+
         return effs
 
     def calculate_ro(self) -> list[float]:

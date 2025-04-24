@@ -1,4 +1,4 @@
-from models.efficiency_method import EfficiencyMethod
+from models.efficiency.efficiency_method import EfficiencyMethod
 from ortools.linear_solver import pywraplp
 
 class DEA(EfficiencyMethod):
@@ -60,7 +60,7 @@ class DEA(EfficiencyMethod):
                 ct.SetCoefficient(lam[k], 1.0)
 
             # Export model
-            # print(solver.ExportModelAsLpFormat(True))
+            #print(solver.ExportModelAsLpFormat(True))
 
             status = solver.Solve()
             effs.append(round(theta.solution_value(), 6) if status == pywraplp.Solver.OPTIMAL else 0.0)
@@ -154,8 +154,8 @@ class DEA(EfficiencyMethod):
              lambda_k >= 0
         """
         effs = []
-        w_inp = self.calculate_wa_w_inp()
-        w_out = self.calculate_wa_w_out()
+        w_inp = self._calculate_wa_w_inp()
+        w_out = self._calculate_wa_w_out()
         for o in range(self.n_obs):
             solver = self._new_solver('WA')
             s_neg = [solver.NumVar(0.0, solver.infinity(), f's_neg_{j}') for j in range(self.n_dim_x)]

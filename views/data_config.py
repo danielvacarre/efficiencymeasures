@@ -1,4 +1,3 @@
-# views/data_config.py
 from pandas import read_csv
 from streamlit import sidebar, write
 from utils.preprocessing import normalize
@@ -16,7 +15,8 @@ def configure_dataset():
         df.columns = [f"col_{i}" for i in range(df.shape[1])]
         write(f"Sin encabezado: {df.shape[1]} columnas detectadas")
 
-    write("Vista previa:", df.head())
+    write("Vista previa:")
+    write(df.head())
     cols = df.columns.tolist()
     inputs  = sidebar.multiselect("Variables de entrada (X)", cols)
     outputs = sidebar.multiselect("Variables de salida (Y)", [c for c in cols if c not in inputs])

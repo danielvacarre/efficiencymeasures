@@ -1,25 +1,22 @@
-# views/results_view.py
-
-import streamlit as st
+from streamlit import button, success, dataframe
 from pandas import DataFrame
-from typing import Optional
+from models.efficiency.dea import DEA
+from models.efficiency.fdh import FDH
 
-from models.dea import DEA
-from models.efficiency_method import EfficiencyMethod
-from models.fdh import FDH
-
-
-def show_results(selected_methods: list[str], df: DataFrame, inputs: list[str], outputs: list[str]) -> None:
-
-    if st.button("Calcular eficiencias"):
+def show_results(
+    selected_methods: list[str],
+    df: DataFrame,
+    inputs: list[str],
+    outputs: list[str]
+) -> None:
+    if button("Calcular eficiencias DEA/FDH"):
         df_results = df[inputs + outputs].copy()
         for m in selected_methods:
-            tipo, op = m.split("_", 1)  # e.g. "DEA", "RI"
-            method_key = op.lower()  # "ri", "ro", ...
+            tipo, op = m.split("_", 1)
+            method_key = op.lower()
             ModelClass = DEA if tipo == "DEA" else FDH
             model = ModelClass(inputs, outputs, df, methods=[method_key])
             func = getattr(model, f"calculate_{method_key}")
-            eff_values = func()
-            df_results[m] = eff_values
-        st.success("¡Listo!")
-        st.dataframe(df_results)
+            df_results[m] = func()
+        success("¡Listo!")
+        dataframe(df_results)
