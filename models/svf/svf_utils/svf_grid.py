@@ -1,167 +1,184 @@
-from itertools import product
 from concurrent.futures import as_completed, ProcessPoolExecutor, ThreadPoolExecutor
+from itertools import product
 from numpy import arange
 from pandas import DataFrame
 from tqdm import tqdm
+
 from models.svf.svf_utils.grid import GRID
 
-def search_contiguous_cell(cell: tuple[int, ...]) -> list[tuple[int, ...]]:
-    """
-    Identify contiguous grid cells for a given cell index.
 
-    Parameters
-    ----------
-    cell : tuple of int
-        Index of the current grid cell.
-
-    Returns
-    -------
-    List of tuples
-        Neighboring cell indices that differ by -1 in one dimension.
+def search_contiguous_cell(cell: tuple) -> list:
     """
-    neighbors: list[tuple[int, ...]] = []
-    for dim, idx in enumerate(cell):
-        if idx > 0:
-            neighbor = list(cell)
-            neighbor[dim] -= 1
-            neighbors.append(tuple(neighbor))
-    return neighbors
+    Returns a list of contiguous cells (neighbors) for a given grid cell.
+
+    Args:
+        cell (tuple): Coordinates of the current cell in the grid.
+
+    Returns:
+        list: List of tuples representing neighboring cells in each dimension.
+    """
+    contiguous = []
+    base = list(cell)
+    for dim_index in range(len(base)):
+        neighbor = base.copy()
+        neighbor[dim_index] = base[dim_index] - 1
+        if neighbor[dim_index] >= 0:
+            contiguous.append(tuple(neighbor))
+    return contiguous
 
 
 class SVFGrid(GRID):
     """
-    Grid generator for Support Vector Frontier (SVF) estimators.
-
-    Computes a multi-dimensional grid of knot values, and evaluates
-    data transformations (phi) and contiguous cells for both the
-    virtual grid and original observations.
+    SVFGrid class: extends GRID to build and process a grid for SVF and SSVF models.
     """
 
     def __init__(
         self,
-        data: DataFrame,
-        inputs: list[str],
-        outputs: list[str],
-        d: int,
-        parallel: int
-    ) -> None:
-        """
-        Initialize SVFGrid parameters.
 
-        Parameters
-        ----------
-        data : pd.DataFrame
-            Input dataset containing input and output variables.
-        inputs : list of str
-            Names of input feature columns.
-        outputs : list of str
-            Names of output target columns.
-        d : int
-            Number of partitions per dimension (grid resolution).
-        parallel : int
-            Number of worker processes for parallel tasks.
+    ):
         """
-        super().__init__(data, inputs, outputs, d, parallel)
-        self.knot_list: list[list[float]] = []
-        self.grid_properties: DataFrame = DataFrame()
-        self.virtual_grid: DataFrame
-        self.data_grid: DataFrame
+        Initializes the SVFGrid.
 
-    def create_grid(self) -> None:
         """
-        Build the grid of knot values and compute its properties.
+        super().__init__()
+        self.grid_properties = None  # DataFrame to store cell IDs, knot values, phi, and neighbors
+        self.virtual_grid = None # DataFrame to store virtual grid points and properties
 
-        Generates `grid_properties` with columns:
-            - id_cell: tuple of grid indices
-            - value: tuple of knot coordinates
-            - phi: list of phi vectors per output
-            - c_cells: contiguous cell neighbors
-
-        Also constructs `virtual_grid` and `data_grid`.
+    def create_grid(self, data, inputs, outputs, d, parallel) -> None:
         """
-        x = self.data[self.inputs]
+        Constructs the grid layout based on input data and hyperparameter d.
+
+        Populates:
+            - grid_properties: DataFrame with 'id_cell', 'value', 'phi', 'c_cells'.
+            - knot_list: List of knot arrays for each input dimension.
+            - virtual_grid: DataFrame of virtual (knot) points.
+            - data_grid: Original data annotated with cell positions and phi.
+        """
+        # Initialize the grid_properties DataFrame
+        self.grid_properties = DataFrame(columns=["id_cell", "value", "phi", "c_cells"])
+
+        # Filter input columns and determine dimensionality
+        x = data[inputs]
         n_dim = x.shape[1]
 
-        # Generate knot_list and indices
-        mins = x.min().values
-        maxs = x.max().values
-        amplitudes = (maxs - mins) / self.d
-        self.knot_list = [
-            list(mins[i] + amplitudes[i] * arange(self.d + 1))
-            for i in range(n_dim)
-        ]
-        index_lists = [list(range(self.d + 1)) for _ in range(n_dim)]
+        # Build knot list and indices for each dimension
+        knot_list = []
+        index_list = []
+        for dim in range(n_dim):
+            col_values = x.iloc[:, dim]
+            min_val, max_val = col_values.min(), col_values.max()
+            step = (max_val - min_val) / d
+            knots = [min_val + i * step for i in range(d + 1)]
+            knot_list.append(knots)
+            index_list.append(arange(len(knots)))
 
-        # Create grid properties DataFrame
-        cells = list(product(*index_lists))
-        values = [tuple(self.knot_list[i][idx[i]] for i in range(n_dim)) for idx in cells]
-        self.grid_properties = DataFrame({'id_cell': cells, 'value': values})
+        # Generate all combinations of cell indices and knot values
+        self.grid_properties["id_cell"] = list(product(*index_list))
+        self.grid_properties["value"] = list(product(*knot_list))
+        self.knot_list = knot_list
 
-        # Parallel compute phi and contiguous cells using threads to avoid pickle issues
-        with ThreadPoolExecutor(max_workers=self.parallel) as executor:
-            results = list(executor.map(self._process_cell_props, self.grid_properties['value']))
+        # Calculate grid properties and data annotations
+        self.calculate_grid_properties(parallel, outputs)
+        self.calculate_virtual_grid(inputs)
+        self.calculate_data_grid(data, inputs, outputs, parallel)
 
-        # Unzip results into phi and contiguous cell lists
-        phi_list, c_cells_list = zip(*results)
-        self.grid_properties['phi'] = list(phi_list)
-        self.grid_properties['c_cells'] = list(c_cells_list)
-
-        # Build virtual grid DataFrame
-        self.virtual_grid = DataFrame(
-            list(self.grid_properties['value']), columns=self.inputs
-        )
-
-        # Compute data_grid by mapping each observation
-        self._build_data_grid(x.values.tolist())
-
-
-    def _process_cell_props(self, cell_value: tuple[float, ...]) -> tuple[list[list[int]], list[tuple[int, ...]]]:
+    def calculate_virtual_grid(self, inputs) -> None:
         """
-        Internal helper: compute id_cell, phi, and contiguous cells for a given grid value.
-
-        Parameters
-        ----------
-        cell_value : tuple of float
-            Coordinates of the grid cell.
-
-        Returns
-        -------
-        phi_list, contiguous_cells
+        Builds a DataFrame of all virtual grid points (knot values) for model evaluation.
         """
-        # Find index of cell in grid_properties
-        cell_idx = self.grid_properties.index[self.grid_properties['value'] == cell_value][0]
-        id_cell = self.grid_properties.at[cell_idx, 'id_cell']
+        values = self.grid_properties["value"].tolist()
+        self.virtual_grid = DataFrame(values, columns= inputs)
 
-        all_ids = list(self.grid_properties['id_cell'])
-        phi = [int(all(id_cell[d] >= other[d] for d in range(len(id_cell)))) for other in all_ids]
-
-        # Replicate phi per output
-        phi_list = [phi.copy() for _ in self.outputs]
-
-        c_cells = search_contiguous_cell(id_cell)
-        return phi_list, c_cells
-
-    def _build_data_grid(self, x_list: list[list[float]]) -> None:
+    def calculate_dmu_phi(self, cell: tuple, outputs: list) -> list:
         """
-        Attach grid position, phi, and contiguous cells to original data.
-        """
-        n_obs = len(x_list)
-        pos_list: list[tuple[int, ...]] = [None] * n_obs
-        phi_list: list[list[int]] = [None] * n_obs
-        c_cells_list: list[list[tuple[int, ...]]] = [None] * n_obs
+        Computes the phi transformation (binary indicator) for a given cell.
 
-        # Map each observation to grid cell
-        for i, obs in enumerate(tqdm(x_list, desc="Mapping data to grid")):
-            # Find cell where all obs dims >= cell thresholds
-            for idx, thresholds in zip(self.grid_properties['id_cell'], self.grid_properties['value']):
-                if all(obs[d] >= thresholds[d] for d in range(len(idx))):
-                    pos_list[i] = idx
-                    phi_list[i] = self.grid_properties.loc[self.grid_properties['id_cell'] == idx, 'phi'].values[0]
-                    c_cells_list[i] = self.grid_properties.loc[self.grid_properties['id_cell'] == idx, 'c_cells'].values[0]
+        Args:
+            cell (tuple): Coordinates of the target cell in the grid.
+
+        Returns:
+            list: List of phi vectors (one per output dimension), each a list of 0/1 indicators.
+        """
+        n_cells = len(self.grid_properties)
+        n_dim = len(cell)
+        phi_flat = []
+
+        # For each grid point, check if all dimensions in 'id_cell' <= cell
+        for idx in range(n_cells):
+            id_coord = self.grid_properties.loc[idx, "id_cell"]
+            indicator = 1
+            for dim_idx in range(n_dim):
+                if cell[dim_idx] < id_coord[dim_idx]:
+                    indicator = 0
                     break
+            phi_flat.append(indicator)
 
-        # Build data_grid
-        self.data_grid = self.data.copy()
-        self.data_grid['pos'] = pos_list
-        self.data_grid['phi'] = phi_list
-        self.data_grid['c_cells'] = c_cells_list
+        # Repeat phi for each output variable
+        return [phi_flat.copy() for _ in outputs]
+
+    def process_cell(self, value: tuple, outputs: list) -> tuple:
+        """
+        Processes a single cell value: finds its grid cell, phi vector, and contiguous cells.
+
+        Args:
+            value (tuple): Knot values of the cell to process.
+
+        Returns:
+            tuple: (cell_id, phi, contiguous_cells) or (None, None, None) on error.
+        """
+        try:
+            cell = self.search_dmu(list(value))
+            phi = self.calculate_dmu_phi(cell, outputs)
+            neighbors = search_contiguous_cell(cell)
+            return cell, phi, neighbors
+        except Exception as e:
+            print(f"Error processing cell {value}: {e}")
+            return None, None, None
+
+    def calculate_grid_properties(self, parallel, outputs) -> None:
+        """
+        Populates the 'phi' and 'c_cells' columns in grid_properties using parallel processing.
+        """
+        futures = {}
+        with ThreadPoolExecutor(max_workers=parallel or None) as executor:
+            for value in self.grid_properties["value"]:
+                futures[executor.submit(self.process_cell, value, outputs)] = value
+
+            results = {}
+            for future in tqdm(as_completed(futures), total=len(futures), desc="Calculating grid properties"):
+                value = futures[future]
+                cell, phi, neighbors = future.result()
+                if cell is not None:
+                    results[value] = (phi, neighbors)
+
+        self.grid_properties["phi"] = self.grid_properties["value"].map(lambda v: results.get(v, (None,))[0])
+        self.grid_properties["c_cells"] = self.grid_properties["value"].map(lambda v: results.get(v, (None, None))[1])
+
+    def calculate_data_grid(self, data, inputs, outputs, parallel) -> None:
+        """
+        Annotates the original data with cell positions, phi vectors, and contiguous cells.
+        """
+        df = data.copy()
+        df = df[inputs + outputs]
+        x_values = df[inputs].values.tolist()
+
+        pos_list = [None] * len(x_values)
+        phi_list = [None] * len(x_values)
+        neighbors_list = [None] * len(x_values)
+
+        futures = {}
+        with ThreadPoolExecutor(max_workers=parallel or None) as executor:
+            for idx, row in enumerate(x_values):
+                futures[executor.submit(self.process_cell, tuple(row), outputs)] = idx
+
+            for future in tqdm(as_completed(futures), total=len(futures), desc="Calculating data grid"):
+                idx = futures[future]
+                cell, phi, neighbors = future.result()
+                pos_list[idx] = cell
+                phi_list[idx] = phi
+                neighbors_list[idx] = neighbors
+
+        self.data_grid = df
+        self.data_grid["pos"] = pos_list
+        self.data_grid["phi"] = phi_list
+        self.data_grid["c_cells"] = neighbors_list

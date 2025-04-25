@@ -3,9 +3,9 @@ from ortools.linear_solver import pywraplp
 from models.efficiency.efficiency_method import EfficiencyMethod
 
 
-class SVFEff(EfficiencyMethod):
+class CSVFEff(EfficiencyMethod):
     """
-    SVF Efficiency Analysis using OR-Tools MIP solver.
+    CSVF Efficiency Analysis using OR-Tools MIP solver.
 
     Supports:
       - Input-oriented BCC (BCC-RI)
@@ -16,6 +16,7 @@ class SVFEff(EfficiencyMethod):
       - Output Russell (RUO)
       - Enhanced Russell Graph (ERG)
       - Cost model (C)
+      - Profit model (P)
     """
 
     def __init__(
@@ -24,24 +25,48 @@ class SVFEff(EfficiencyMethod):
         outputs: List[str],
         data,
         df_estimation,
+        weights_cols: Optional[List[str]] = None,
+        prices_cols: Optional[List[str]] = None,
         eps: float = 0.0
     ):
         """
-        Initialize the SVFEff instance.
+        Initialize the CSVFEff instance.
 
         Args:
             inputs: Names of input variable columns.
             outputs: Names of output variable columns.
             data: Original DataFrame.
-            eps: Epsilon parameter.
             df_estimation: DataFrame used for frontier estimation.
+            weights_cols: Column names for input weights (one per input).
+            prices_cols: Column names for output prices (one per output).
+            eps: Epsilon parameter.
         """
-        super().__init__(inputs, outputs, data, methods=[], df_estimation=df_estimation)
+        super().__init__(inputs, outputs, data,
+                         methods=[],
+                         df_estimation=df_estimation,
+                         weights_cols = weights_cols, prices_cols = prices_cols)
+
+        # Store column names
+        self.weights_cols = weights_cols or []
+        self.prices_cols = prices_cols or []
+
+        # Extract weight matrix from data, or default to 1s
+        if self.weights_cols:
+            self.weights = data[self.weights_cols].values.tolist()
+        else:
+            self.weights = [[1.0] * len(inputs) for _ in range(len(data))]
+
+        # Extract price matrix from data, or default to 1s
+        if self.prices_cols:
+            self.prices = data[self.prices_cols].values.tolist()
+        else:
+            self.prices = [[1.0] * len(outputs) for _ in range(len(data))]
+
         # Convert to nested Python lists for OR-Tools
-        self._inputs_data = self.data[self.inputs].values.tolist()
-        self._outputs_data = self.data[self.outputs].values.tolist()
-        self._inputs_est = self.df_estimation[self.inputs].values.tolist()
-        self._outputs_est = self.df_estimation[self.outputs].values.tolist()
+        self._inputs_data = data[inputs].values.tolist()
+        self._outputs_data = data[outputs].values.tolist()
+        self._inputs_est = df_estimation[inputs].values.tolist()
+        self._outputs_est = df_estimation[outputs].values.tolist()
 
         self.num_observations = len(self._inputs_est)
         self.num_inputs = len(self.inputs)
@@ -80,7 +105,7 @@ class SVFEff(EfficiencyMethod):
         for o in range(len(self.data)):
             solver = self._new_solver('BCC_RI')
             theta = solver.NumVar(0.0, solver.infinity(), 'theta')
-            lam = [solver.NumVar(0.0, solver.infinity(), f'lam_{k}')
+            lam = [solver.IntVar(0.0, 1, f'lam_{k}')
                    for k in range(self.num_observations)]
             solver.Minimize(theta)
 
@@ -105,7 +130,7 @@ class SVFEff(EfficiencyMethod):
                 ct_conv.SetCoefficient(lam[k], 1.0)
 
             # Export model
-            #print(solver.ExportModelAsLpFormat(False))
+            print(solver.ExportModelAsLpFormat(False))
 
             status = solver.Solve()
             if status == pywraplp.Solver.OPTIMAL:
@@ -134,7 +159,7 @@ class SVFEff(EfficiencyMethod):
         for o in range(len(self.data)):
             solver = self._new_solver('BCC_RO')
             phi = solver.NumVar(0.0, solver.infinity(), 'phi')
-            lam = [solver.NumVar(0.0, solver.infinity(), f'lam_{k}')
+            lam = [solver.IntVar(0.0, 1, f'lam_{k}')
                    for k in range(self.num_observations)]
             solver.Maximize(phi)
 
@@ -184,7 +209,7 @@ class SVFEff(EfficiencyMethod):
         for o in range(len(self.data)):
             solver = self._new_solver('DDF')
             beta = solver.NumVar(0.0, solver.infinity(), 'beta')
-            lam = [solver.NumVar(0.0, solver.infinity(), f'lam_{k}')
+            lam = [solver.IntVar(0.0, 1, f'lam_{k}')
                    for k in range(self.num_observations)]
             solver.Maximize(beta)
 
@@ -238,7 +263,7 @@ class SVFEff(EfficiencyMethod):
             solver = self._new_solver('WA')
             s_neg = [solver.NumVar(0.0, solver.infinity(), f's_neg_{j}') for j in range(self.num_inputs)]
             s_pos = [solver.NumVar(0.0, solver.infinity(), f's_pos_{r}') for r in range(self.num_outputs)]
-            lam = [solver.NumVar(0.0, solver.infinity(), f'lam_{k}')
+            lam = [solver.IntVar(0.0, 1, f'lam_{k}')
                    for k in range(self.num_observations)]
             obj = solver.Objective()
             obj.SetMaximization()
@@ -292,7 +317,7 @@ class SVFEff(EfficiencyMethod):
         for o in range(len(self.data)):
             solver = self._new_solver('RUI')
             theta = [solver.NumVar(0.0, solver.infinity(), f'theta_{j}') for j in range(self.num_inputs)]
-            lam = [solver.NumVar(0.0, solver.infinity(), f'lam_{k}')
+            lam = [solver.IntVar(0.0, 1, f'lam_{k}')
                    for k in range(self.num_observations)]
             obj = solver.Objective()
             obj.SetMinimization()
@@ -345,7 +370,7 @@ class SVFEff(EfficiencyMethod):
         for o in range(len(self.data)):
             solver = self._new_solver('RUO')
             phi = [solver.NumVar(1.0, solver.infinity(), f'phi_{r}') for r in range(self.num_outputs)]
-            lam = [solver.NumVar(0.0, solver.infinity(), f'lam_{k}')
+            lam = [solver.IntVar(0.0, 1, f'lam_{k}')
                    for k in range(self.num_observations)]
             obj = solver.Objective()
             obj.SetMaximization()
@@ -400,7 +425,7 @@ class SVFEff(EfficiencyMethod):
             beta = solver.NumVar(0.0, solver.infinity(), 'beta')
             t_neg = [solver.NumVar(0.0, solver.infinity(), f't_neg_{j}') for j in range(self.num_inputs)]
             t_pos = [solver.NumVar(0.0, solver.infinity(), f't_pos_{r}') for r in range(self.num_outputs)]
-            lam = [solver.NumVar(0.0, solver.infinity(), f'lam_{k}') for k in range(self.num_observations)]
+            lam = [solver.IntVar(0.0, 1, f'lam_{k}') for k in range(self.num_observations)]
             # Objective expression
             expr = beta
             for j in range(self.num_inputs):
@@ -430,4 +455,105 @@ class SVFEff(EfficiencyMethod):
             efficiencies.append(round(solver.Objective().Value(), 6) if status == pywraplp.Solver.OPTIMAL else 0.0)
         return efficiencies
 
+    def calculate_cost(self, eps: float = None) -> List[float]:
+        """
+        Cost model (C).
 
+        Minimize sum(weights[o][j] * x_var[j])
+        subject to:
+            sum(lam[k] * inputs_est[k][j]) <= x_var[j]
+            sum(lam[k] * outputs_est[k][r]) >= outputs[o][r]
+            sum(lam) == 1
+
+        Returns:
+            List of cost-based efficiency scores.
+        """
+        if eps is None:
+            eps = self.eps
+        efficiencies: List[float] = []
+        for o in range(len(self.data)):
+            solver = self._new_solver('COST_MODEL')
+            x_var = [solver.NumVar(0.0, solver.infinity(), f'x_{j}') for j in range(self.num_inputs)]
+            lam = [solver.IntVar(0, 1, f'lam_{k}') for k in range(self.num_observations)]
+            # Objective
+            expr = solver.Sum(self.weights[o][j] * x_var[j] for j in range(self.num_inputs))
+            solver.Minimize(expr)
+            # Constraints
+            for j in range(self.num_inputs):
+                ct = solver.RowConstraint(-solver.infinity(), 0.0)
+                for k in range(self.num_observations): ct.SetCoefficient(lam[k], self._inputs_est[k][j])
+                ct.SetCoefficient(x_var[j], -1.0)
+            for r in range(self.num_outputs):
+                ct = solver.RowConstraint(self._outputs_data[o][r], solver.infinity())
+                for k in range(self.num_observations): ct.SetCoefficient(lam[k], self._outputs_est[k][r] + eps)
+            ct_conv = solver.RowConstraint(1.0, 1.0)
+            for k in range(self.num_observations): ct_conv.SetCoefficient(lam[k], 1.0)
+            status = solver.Solve()
+            if status == pywraplp.Solver.OPTIMAL:
+                efficiencies.append(round(expr.solution_value(), 6))
+            else:
+                efficiencies.append(0.0)
+        return efficiencies
+
+    def calculate_profit(self, eps: float = None) -> List[float]:
+        """
+        Profit model (P).
+
+        Maximize: sum(prices[o][r] * y_var[r]) - sum(weights[o][j] * x_var[j])
+        Subject to:
+            sum(lambda_k * x_est[k][j]) <= x_var[j],  for each input j
+            sum(lambda_k * (y_est[k][r] + eps)) >= y_var[r], for each output r
+            sum(lambda_k) == 1
+            lambda_k binary {0,1}
+            x_var, y_var >= 0
+
+        Returns:
+            List of profit efficiency scores for each observation.
+        """
+        if eps is None:
+            eps = self.eps
+        efficiencies: List[float] = []
+
+        for o in range(len(self.data)):
+            solver = self._new_solver('PROFIT_MODEL')
+
+            # Decision variables
+            x_var = [solver.NumVar(0.0, solver.infinity(), f'x_{j}') for j in range(self.num_inputs)]
+            y_var = [solver.NumVar(0.0, solver.infinity(), f'y_{r}') for r in range(self.num_outputs)]
+            lam = [solver.IntVar(0.0, 1.0, f'lam_{k}') for k in range(self.num_observations)]
+
+            # Objective: maximize revenue minus cost
+            objective = solver.Objective()
+            objective.SetMaximization()
+            for r in range(self.num_outputs):
+                objective.SetCoefficient(y_var[r], self.prices[o][r])
+            for j in range(self.num_inputs):
+                objective.SetCoefficient(x_var[j], -self.weights[o][j])
+
+            # Input mixing constraints
+            for j in range(self.num_inputs):
+                ct = solver.RowConstraint(-solver.infinity(), 0.0)
+                for k in range(self.num_observations):
+                    ct.SetCoefficient(lam[k], self._inputs_est[k][j])
+                ct.SetCoefficient(x_var[j], -1.0)
+
+            # Output mixing constraints
+            for r in range(self.num_outputs):
+                ct = solver.RowConstraint(0.0, solver.infinity())
+                for k in range(self.num_observations):
+                    coeff = self._outputs_est[k][r] + eps
+                    ct.SetCoefficient(lam[k], coeff)
+                ct.SetCoefficient(y_var[r], -1.0)
+
+            # Convexity constraint
+            ct_conv = solver.RowConstraint(1.0, 1.0)
+            for k in range(self.num_observations):
+                ct_conv.SetCoefficient(lam[k], 1.0)
+
+            status = solver.Solve()
+            if status == pywraplp.Solver.OPTIMAL:
+                efficiencies.append(round(objective.Value(), 6))
+            else:
+                efficiencies.append(0.0)
+
+        return efficiencies

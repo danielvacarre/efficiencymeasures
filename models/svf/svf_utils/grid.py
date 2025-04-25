@@ -1,65 +1,59 @@
-import pandas
 from numpy import transpose
 
 
 class GRID:
     """
-    Clase GRID para realizar el modelo SVF. Un grid es una partición del espacio de los inputs que se divide en celdas.
+    GRID class for the SVF model. A grid is a partition of the input space divided into cells.
     """
 
-    def __init__(self, data: "pandas.DataFrame", inputs: list, outputs: list, d: list, parallel: int = 0):
+    def __init__(self):
         """
-        Constructor de la clase GRID.
+        GRID class constructor.
 
-        Args:
-            data (pandas.DataFrame): Conjunto de datos sobre los que se construye el grid.
-            inputs (list): Listado de inputs.
-            outputs (list): Listado de outputs.
-            d (list): Número de particiones en las que se divide el grid.
-            parallel: Número de procesadores a utilizar en el cálculo del grid.
         """
-        self.data = data
-        self.inputs = inputs
-        self.outputs = outputs
-        self.d = d
-        self.parallel = parallel
-        self.data_grid = None  # Aquí se almacenará la partición de datos en el grid
-        self.knot_list = None  # Lista de nodos del grid para cada dimensión
+        self.data_grid = None  # Will store the partitioned data grid
+        self.knot_list = None  # List of grid knots for each dimension
 
     def search_dmu(self, dmu):
         """
-            Función que devuelve la celda en la que se encuentra una observación en el grid
+        Returns the cell in which an observation is located within the grid.
+
         Args:
-            dmu (list): Observación a buscar en el grid
+            dmu (list): Observation values to locate in the grid.
+
         Returns:
-            position (list): Vector con la posición de la observación en el grid
+            tuple: Coordinates of the observation's position in the grid.
         """
-        cell = list()
+        cell = []
+        # Transpose knot_list for dimension-wise comparison
         r = transpose(self.knot_list)
-        for l in range(0, len(self.knot_list)):
-            for m in range(0, len(self.knot_list[l])):
-                trans = transformation(dmu[l], r[m][l])
-                if trans < 0:
-                    cell.append(m - 1)
+        for dim_index in range(len(self.knot_list)):
+            # Iterate through knots in this dimension
+            for knot_index in range(len(self.knot_list[dim_index])):
+                comparison = transformation(dmu[dim_index], r[knot_index][dim_index])
+                if comparison < 0:
+                    cell.append(knot_index - 1)
                     break
-                if trans == 0:
-                    cell.append(m)
+                if comparison == 0:
+                    cell.append(knot_index)
                     break
-                if trans > 0 and m == len(self.knot_list[l]) - 1:
-                    cell.append(m)
+                # If last knot and still greater, assign to last cell
+                if comparison > 0 and knot_index == len(self.knot_list[dim_index]) - 1:
+                    cell.append(knot_index)
                     break
         return tuple(cell)
 
+
 def transformation(x_i: float, t_k: float) -> int:
     """
-    Evalúa si el valor de una observación es mayor, menor o igual a un nodo del grid.
+    Determines whether an observation value is less than, equal to, or greater than a grid knot.
 
     Args:
-        x_i (float): Valor de la observación a evaluar.
-        t_k (float): Valor del nodo con el que se compara.
+        x_i (float): Observation value to compare.
+        t_k (float): Grid knot value to compare against.
 
     Returns:
-        int: 1 si x_i > t_k, 0 si x_i == t_k, -1 si x_i < t_k.
+        int: -1 if x_i < t_k, 0 if x_i == t_k, 1 if x_i > t_k.
     """
 
     if x_i < t_k:

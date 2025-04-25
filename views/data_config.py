@@ -20,6 +20,9 @@ def configure_dataset():
     cols = df.columns.tolist()
     inputs  = sidebar.multiselect("Variables de entrada (X)", cols)
     outputs = sidebar.multiselect("Variables de salida (Y)", [c for c in cols if c not in inputs])
+    prices = sidebar.multiselect("Precios", [c for c in cols if c not in inputs and c not in outputs])
+    weights = sidebar.multiselect("Pesos", [c for c in cols if c not in inputs and c not in outputs and c not in prices])
+
 
     if inputs and outputs:
         X = df[inputs]
@@ -28,6 +31,9 @@ def configure_dataset():
         df_pre = X.join(df[outputs])
         write("Datos listos para modelado")
         write(df_pre.head())
-        return df_pre, inputs, outputs
+
+        df_pre = df_pre.join(df[prices])
+        df_pre = df_pre.join(df[weights])
+        return df_pre, inputs, outputs, prices, weights
 
     return None, None, None

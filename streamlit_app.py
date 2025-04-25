@@ -1,11 +1,9 @@
 import streamlit as st
 from pandas import DataFrame
 
-from models.efficiency.svf_eff import SVFEff
-from views.data_config   import configure_dataset
-from models.efficiency.dea import DEA
-from models.efficiency.fdh import FDH
-from views.svf_config    import configure_svf
+from views.data_config    import configure_dataset
+from views.model_config   import configure_svf
+from views.results_config import calculate_all
 
 st.set_page_config(layout="wide")
 st.title("Estimación de Fronteras")
@@ -16,7 +14,7 @@ nd = configure_dataset()
 if nd is None or nd[0] is None:
     st.stop()
 
-df, inputs, outputs = nd
+df, inputs, outputs, prices, weights = nd
 
 # Sidebar: selección de métodos clásicos
 st.sidebar.subheader("1. Métodos clásicos")
@@ -34,6 +32,29 @@ selected_classical = st.sidebar.multiselect(
 st.sidebar.subheader("2. Simulación SVF")
 svf = configure_svf(df, inputs, outputs)
 
+if svf is not None:
+    st.subheader("Visualizaciones y exportación SVF")
+
+    if st.button("Mostrar frontera"):
+        fig = svf.plot_frontier(num_points=200, show_data=True)
+        st.plotly_chart(fig, use_container_width=True)
+    # 3.3. Ver la solución (pesos)
+    if st.button("Visualizar soluciones SVF"):
+        # Asumo que svf.solution.w es array de pesos
+        w = svf.solution.w
+        xi = svf.solution.xi
+        df_sol = DataFrame()
+
+        if len(outputs) == 1:
+            df_sol["w"] = w
+            df_sol["xi"] = xi
+        else:
+            for j, out in enumerate(svf.outputs):
+                df_sol[f"w_{out}"] = w[:, j]
+                df_sol[f"xi_{out}"] = xi[:, j]
+        st.dataframe(df_sol, use_container_width=True)
+
+
 # Sidebar: métodos SVF (solo si hay modelo entrenado)
 SVF_METHODS = ["SVF_RI", "SVF_RI-", "SVF_RI+",
                "SVF_RO", "SVF_RO-", "SVF_RO+",
@@ -42,7 +63,16 @@ SVF_METHODS = ["SVF_RI", "SVF_RI-", "SVF_RI+",
                "SVF_RUI", "SVF_RUI-", "SVF_RUI+",
                "SVF_RUO", "SVF_RUO-", "SVF_RUO+",
                "SVF_ERG", "SVF_ERG-", "SVF_ERG+",
-               "SVF_COST", "SVF_COST-", "SVF_COST+",]
+               "CSVF_RI", "CSVF_RI-", "CSVF_RI+",
+               "CSVF_RO", "CSVF_RO-", "CSVF_RO+",
+               "CSVF_DDF", "CSVF_DDF-", "CSVF_DDF+",
+               "CSVF_WA", "CSVF_WA-", "CSVF_WA+",
+               "CSVF_RUI", "CSVF_RUI-", "CSVF_RUI+",
+               "CSVF_RUO", "CSVF_RUO-", "CSVF_RUO+",
+               "CSVF_ERG", "CSVF_ERG-", "CSVF_ERG+",
+               "CSVF_COST", "CSVF_COST-", "CSVF_COST+",
+               "CSVF_PROFIT", "CSVF_PROFIT-", "CSVF_PROFIT+",
+               ]
 
 selected_svf = []
 if svf is not None:
@@ -52,56 +82,44 @@ if svf is not None:
         SVF_METHODS
     )
 
-# Botón unificado para calcular todas las eficiencias
-def calculate_all():
-    df_res: DataFrame = df[inputs + outputs].copy()
 
-    # Métodos clásicos
-    for m in selected_classical:
-        tipo, op = m.split("_", 1)
-        key = op.lower()
-        ModelClass = DEA if tipo == "DEA" else FDH
-        model = ModelClass(inputs, outputs, df, methods=[key])
-        func = getattr(model, f"calculate_{key}")
-        print(f"Calculando {key} con {tipo}")
-        df_res[m] = func()
-        print(df_res)
+def calculate_asignative_profit(df, inputs, outputs, prices, weights, df_all):
+    df_res: DataFrame = df[inputs + outputs + prices + weights].copy()
 
-    # Métodos SVF
-    if svf is not None:
-        df_est = svf.grid.data_grid
-        weights = svf.solution.w
-        for m in selected_svf:
-            print(m)
-            _, op = m.split("_", 1)
-            # Detectar signo
-            if op.endswith('+'):
-                eps_val = svf.eps
-                method_key = op[:-1].lower()
-            elif op.endswith('-'):
-                eps_val = -svf.eps
-                method_key = op[:-1].lower()
-            else:
-                eps_val = 0.0
-                method_key = op.lower()
+    pesos = df[weights]
+    wx =  df[weights].mul(pesos.values).sum(axis=1)
 
-            eff_solver = SVFEff(
-                inputs=inputs,
-                outputs=outputs,
-                data=df,
-                df_estimation=df_est,
-                weights=weights,
-                eps=svf.eps
-            )
-            func = getattr(eff_solver, f"calculate_{method_key}")
-            # Pasamos eps_val sólo si es distinto de 0
-            if eps_val != 0.0:
-                df_res[m] = func(eps_val)
-            else:
-                df_res[m] = func()
+    df_res["wx"] = wx
+    df_res["CE"] = df_all["CSVF_COST"] /wx
+    df_res["CE-"] = df_all["CSVF_COST-"] /wx
+    df_res["CE+"] = df_all["CSVF_COST+"] /wx
+
+    df_res["AE"] = df_res["CE"] / df_all["CSVF_RI"]
+    df_res["AE-"] = df_res["CE-"] / df_all["CSVF_RI-"]
+    df_res["AE+"] = df_res["CE+"] / df_all["CSVF_RI+"]
+
+    prices = df[prices]
+    py = df[outputs].mul(prices.values).sum(axis=1)
+
+    df_res["py-wx"] = py - wx
+    df_res["py+wx"] = py + wx
+
+    df_res["PI"] = (df_all["CSVF_PROFIT"] - df_res["py-wx"]) / df_res["py+wx"]
+    df_res["PI-"] = (df_all["CSVF_PROFIT-"] - df_res["py-wx"]) / df_res["py+wx"]
+    df_res["PI+"] = (df_all["CSVF_PROFIT+"] - df_res["py-wx"]) / df_res["py+wx"]
+
+    df_res["AI"] = df_res["PI"] / df_all["CSVF_DDF"]
+    df_res["AI-"] = df_res["PI-"] / df_all["CSVF_DDF-"]
+    df_res["AI+"] = df_res["PI+"] / df_all["CSVF_DDF+"]
+
     return df_res
 
 if st.sidebar.button("▶ Calcular todas las eficiencias"):
-    df_all = calculate_all()
+    df_eff = calculate_all(df,inputs,outputs, selected_classical, selected_svf, svf, prices, weights)
     st.success("Cálculo completado")
-    st.dataframe(df_all, use_container_width=True)
+    st.dataframe(df_eff, use_container_width=True)
+
+    st.write("Eficiencia AE y AI")
+    df_ae_ai = calculate_asignative_profit(df,inputs, outputs, prices, weights, df_eff)
+    st.success("Cálculo completado")
+    st.dataframe(df_ae_ai, use_container_width=True)

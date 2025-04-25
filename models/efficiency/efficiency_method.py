@@ -22,16 +22,16 @@ class EfficiencyMethod:
         data: DataFrame,
         methods: List[str],
         df_estimation: Optional[DataFrame] = None,
-        weights: Optional[dict] = None,
-        prices: Optional[object] = None
+        weights_cols: List[str] = None,
+        prices_cols: List[str] = None
     ):
         self.inputs = inputs
         self.outputs = outputs
         self.data = data.copy()
         self.methods = methods
         self.df_estimation = df_estimation
-        self.weights = weights
-        self.prices = prices
+        self.weights_cols = weights_cols
+        self.prices_cols = prices_cols
         self.df_eff: Optional[DataFrame] = None
 
     def get_efficiencies(self, eps: float = 0.0) -> DataFrame:

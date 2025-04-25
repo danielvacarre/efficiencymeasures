@@ -4,3 +4,4 @@ pandas
 numpy
 ortools
 tqdm
+plotly
